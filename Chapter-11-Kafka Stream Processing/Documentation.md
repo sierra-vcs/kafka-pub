@@ -264,3 +264,9 @@ If Kafka Streams is a powerful, customizable robot arm that you have to program 
 
 - The Kafka Streams library is the code that controls the robot arm's every movement and function. You can program it to do anything you can imagine, but it requires deep technical knowledge.
 - The ksqlDB control panel is the simplified SQL interface. You can just type commands like "Move box A to shelf B," and the control panel translates that into the complex code the robot arm needs. You can do a lot of common tasks very easily and quickly, but you can't program a completely custom, novel action that isn't supported by the control panel's commands.
+
+## References
+
+- [Kafka Streams](https://medium.com/@kamini.velvet/kafka-streams-part-i-373a5e09a539)
+- [What is Kafka Streams API ?](https://www.geeksforgeeks.org/devops/what-is-kafka-streams-api/)
+- [Apache Kafka Streams](https://youtu.be/UbNoL5tJEjc?si=-GyxO3w6vE_whLTt)

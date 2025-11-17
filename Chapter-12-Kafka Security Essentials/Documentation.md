@@ -489,3 +489,13 @@ Think of a secret management system as a bank's safety deposit box.
 - Your application is you, the owner of the box. You don't keep the key in your pocket all the time; you authenticate to the bank with a secure ID and then use the key to retrieve the items when you need them. The key itself is never left lying around.
 
 This ensures that your secrets are protected and that all access is logged, providing a much higher level of security for your Kafka environment.
+
+---
+
+## References
+
+- [Kafka Security: Authorization with Default and Custom Authorizers](https://youtu.be/Jb7XTUFhUHY?si=wN1VxcIljdavGiRu)
+
+- [Kafka Acls](https://medium.com/@nzaporozhets/getting-started-with-kafka-acls-14b16bbf83d1)
+
+- [Install Kafka Cluster(Kraft) with SASL_PLAINTEXT and ACL configs](https://medium.com/@azsecured/install-kafka-cluster-kraft-with-sasl-plaintext-and-acl-configs-ae01a1e0040d)

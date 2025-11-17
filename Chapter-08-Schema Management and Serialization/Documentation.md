@@ -200,8 +200,12 @@ First, let's define our JSON Schema and the corresponding C# class. The C# class
    // This is a Plain Old C# Object (POCO)
    public class User
    {
-       public string Name { get; set; }
-       public int Age { get; set; }
+        public string Name { get; set; }
+        public int Age { get; set; }
+        public string Email { get; set; }
+        public string Address { get; set; }
+        public string PhoneNumber { get; set; }
+        public DateTime CreatedAt { get; set; }
    }
    ```
 
@@ -211,20 +215,18 @@ First, let's define our JSON Schema and the corresponding C# class. The C# class
 
    ```json
    {
-     "$schema": "http://json-schema.org/draft-07/schema#",
+     "$schema": "http://json-schema.org/draft-04/schema#",
      "title": "User",
      "type": "object",
+     "additionalProperties": false,
      "properties": {
-       "Name": {
-         "type": "string",
-         "description": "The user's name."
-       },
-       "Age": {
-         "type": "integer",
-         "description": "The user's age."
-       }
-     },
-     "required": ["Name", "Age"]
+       "Name": { "type": "string" },
+       "Age": { "type": "integer", "format": "int32" },
+       "Email": { "type": "string" },
+       "CreatedAt": { "type": "string", "format": "date-time" },
+       "Address": { "type": "string" },
+       "PhoneNumber": { "type": "string" }
+     }
    }
    ```
 
@@ -236,57 +238,57 @@ The producer's job is to take a User object, serialize it using the `JsonSeriali
 using Confluent.Kafka;
 using Confluent.SchemaRegistry;
 using Confluent.SchemaRegistry.Serdes;
-using System.Threading.Tasks;
 
 public class JsonSchemaProducer
 {
-    public static async Task ProduceUserMessage(string topicName, string schemaRegistryUrl)
+    // string agentTopic = "app-agent";
+
+    public static async Task ProduceUserMessageAsync(string topicName, User user)
     {
-        // Define the JSON schema string
-        const string userSchema = @"
-        {
-          ""$schema"": ""http://json-schema.org/draft-07/schema#"",
-          ""title"": ""User"",
-          ""type"": ""object"",
-          ""properties"": {
-            ""Name"": {
-              ""type"": ""string"",
-              ""description"": ""The user's name.""
-            },
-            ""Age"": {
-              ""type"": ""integer"",
-              ""description"": ""The user's age.""
-            }
-          },
-          ""required"": [""Name"", ""Age""]
-        }";
+      var schemaRegistryConfig = new SchemaRegistryConfig
+      {
+        Url = "http://localhost:8081"
+      };
 
-        var schemaRegistryConfig = new SchemaRegistryConfig { Url = schemaRegistryUrl };
-        var producerConfig = new ProducerConfig { BootstrapServers = "localhost:9092" };
+      var producerConfig = new ProducerConfig
+      {
+        BootstrapServers = "localhost:9092",
+      };
 
-        using (var schemaRegistry = new CachedSchemaRegistryClient(schemaRegistryConfig))
-        using (var producer = new ProducerBuilder<string, User>(producerConfig)
-            .SetValueSerializer(new JsonSerializer<User>(schemaRegistry, new JsonSerializerConfig
-            {
-                // This is the key part for JSON Schema. We provide the schema to the serializer.
-                // The serializer will auto-register it with the Schema Registry.
+      using var schemaRegistry = new CachedSchemaRegistryClient(schemaRegistryConfig);
+
+      using var producer = new ProducerBuilder<string, User>(producerConfig)
+          .SetValueSerializer(new JsonSerializer<User>(
+              schemaRegistry,
+              new JsonSerializerConfig
+              {
                 AutoRegisterSchemas = true,
-                SubjectNameStrategy = SubjectNameStrategy.Topic,
-                JsonSchema = userSchema
-            }))
-            .Build())
-        {
-            var user = new User { Name = "Charlie", Age = 45 };
+                SubjectNameStrategy = SubjectNameStrategy.Topic  // Correct property name
+              }))
+          .Build();
 
-            var message = new Message<string, User>
-            {
-                Key = user.Name,
-                Value = user
-            };
+      var message = new Message<string, User>
+      {
+        Key = user.Name,
+        Value = user
+      };
 
-            var deliveryResult = await producer.ProduceAsync(topicName, message);
-            System.Console.WriteLine($"Produced message to {deliveryResult.TopicPartitionOffset} with key: {deliveryResult.Message.Key}");
-        }
+      try
+      {
+        var result = await producer.ProduceAsync(topicName, message);
+        Console.WriteLine($"✅ Produced message to {result.TopicPartitionOffset} with key '{result.Message.Key}'.");
+
+        var schema = await schemaRegistry.GetLatestSchemaAsync("app-agent-value");
+
+        Console.WriteLine($"Schema ID: {schema.Id}");
+        Console.WriteLine($"Version: {schema.Version}");
+        Console.WriteLine($"Schema: {schema.SchemaString}");
+      }
+      catch (ProduceException<string, User> ex)
+      {
+        Console.WriteLine($"❌ Delivery failed: {ex.Error.Reason}");
+        throw;
+      }
     }
 }
 ```
@@ -297,51 +299,63 @@ The consumer's implementation is straightforward. It simply needs to use the `Js
 
 ```csharp
 using Confluent.Kafka;
+using Confluent.Kafka.SyncOverAsync;
 using Confluent.SchemaRegistry;
 using Confluent.SchemaRegistry.Serdes;
-using System.Threading;
 
 public class JsonSchemaConsumer
 {
-    public static void ConsumeUserMessages(string topicName, string schemaRegistryUrl)
-    {
-        var schemaRegistryConfig = new SchemaRegistryConfig { Url = schemaRegistryUrl };
-        var consumerConfig = new ConsumerConfig
-        {
-            BootstrapServers = "localhost:9092",
-            GroupId = "my-json-consumer-group",
-            AutoOffsetReset = AutoOffsetReset.Earliest
-        };
 
-        using (var schemaRegistry = new CachedSchemaRegistryClient(schemaRegistryConfig))
-        using (var consumer = new ConsumerBuilder<string, User>(consumerConfig)
-            // Use the JsonDeserializer. It handles fetching the schema from the registry.
-            .SetValueDeserializer(new JsonDeserializer<User>(schemaRegistry).AsSyncOverAsync())
-            .Build())
+     public static async Task ConsumeMessages()
         {
-            consumer.Subscribe(topicName);
-            var cts = new CancellationTokenSource();
-            System.Console.CancelKeyPress += (_, e) =>
+            var schemaRegistryConfig = new SchemaRegistryConfig
             {
-                e.Cancel = true;
-                cts.Cancel();
+                Url = "http://localhost:8081"
             };
+
+            var consumerConfig = new ConsumerConfig
+            {
+                BootstrapServers = "localhost:9092",
+                GroupId = "schema-registry-consumer-group",
+                AutoOffsetReset = AutoOffsetReset.Earliest
+            };
+
+            using var schemaRegistry = new CachedSchemaRegistryClient(schemaRegistryConfig);
+            using var consumer = new ConsumerBuilder<string, User>(consumerConfig)
+                .SetValueDeserializer(
+                    new JsonDeserializer<User>(schemaRegistry).AsSyncOverAsync()
+                )
+                .Build();
+
+            consumer.Subscribe("app-agent");
+
+            Console.WriteLine("Consuming messages from 'app-agent'...");
 
             try
             {
                 while (true)
                 {
-                    var consumeResult = consumer.Consume(cts.Token);
-                    var user = consumeResult.Message.Value;
-                    System.Console.WriteLine($"Consumed message! Name: {user.Name}, Age: {user.Age}");
+                    var result = consumer.Consume();
+
+                    var user = result.Message.Value;
+
+                    Console.WriteLine(
+                        $"Received: Key={result.Message.Key}, " +
+                        $"Name={user.Name}, Age={user.Age}, Email={user.Email}, " +
+                        $"Address={user.Address}, CreatedAt={user.CreatedAt}"
+                    );
+                    var schema = await schemaRegistry.GetLatestSchemaAsync("app-agent-value");
+
+                    Console.WriteLine($"Schema ID: {schema.Id}");
+                    Console.WriteLine($"Version: {schema.Version}");
+                    Console.WriteLine($"Schema: {schema.SchemaString}");
                 }
             }
             catch (OperationCanceledException)
             {
-                // Clean shutdown
+                consumer.Close();
             }
         }
-    }
 }
 ```
 
@@ -413,64 +427,58 @@ You can configure the compatibility level programmatically or via a command-line
 
 1. **Using the `Confluent.SchemaRegistry.AdminClient` in C#**
 
-   This code snippet shows how you can programmatically set the compatibility level for a specific topic's schema subject.
+This code snippet shows how you can programmatically set the compatibility level for a specific topic's schema subject.
 
-   ```csharp
-   using Confluent.SchemaRegistry;
-   using Confluent.SchemaRegistry.Administration;
-   using System.Threading.Tasks;
+```csharp
+using Confluent.SchemaRegistry;
 
-   public class SchemaCompatibilityConfigurator
-   {
-       public static async Task SetCompatibility(string schemaRegistryUrl, string topicName, CompatibilityLevel level)
-       {
-           var adminClientConfig = new SchemaRegistryConfig { Url = schemaRegistryUrl };
+public static class SchemaRegistryHelper
+{
+    public static async Task SetCompatibilityAsync(string schemaRegistryUrl, string topicName, Compatibility compatibility)
+    {
+        var config = new SchemaRegistryConfig
+        {
+            Url = schemaRegistryUrl
+        };
 
-           using (var adminClient = new SchemaRegistryAdminClient(adminClientConfig))
-           {
-               // The subject name is typically the topic name with "-value" appended.
-               var subjectName = $"{topicName}-value";
+        using var client = new CachedSchemaRegistryClient(config);
 
-               System.Console.WriteLine($"Setting compatibility for subject '{subjectName}' to {level}...");
+        // Schema subjects follow: <topic>-value
+        var subjectName = $"{topicName}-value";
 
-               try
-               {
-                   await adminClient.UpdateConfigAsync(subjectName, new Config
-                   {
-                       CompatibilityLevel = level
-                   });
-                   System.Console.WriteLine($"Compatibility for '{subjectName}' successfully updated to {level}.");
-               }
-               catch (SchemaRegistryException ex)
-               {
-                   System.Console.WriteLine($"Error updating compatibility for '{subjectName}': {ex.Message}");
-               }
-           }
-       }
-   }
+        Console.WriteLine($"Setting compatibility for subject '{subjectName}' to {compatibility}...");
 
-   // Example usage:
-   await SchemaCompatibilityConfigurator.SetCompatibility("http://localhost:8081", "my-users-topic", CompatibilityLevel.FULL);
-   ```
+        try
+        {
+            await client.UpdateCompatibilityAsync(compatibility, subjectName);
+            Console.WriteLine($"Compatibility for '{subjectName}' updated to {compatibility}.");
+        }
+        catch (SchemaRegistryException ex)
+        {
+            Console.WriteLine($"Failed to update compatibility: {ex.Message}");
+        }
+    }
+}
+```
 
 2. **Using the confluent Command-Line Tool**
 
-   If you have the Confluent CLI installed, you can easily manage compatibility settings from your terminal without writing any code.
+If you have the Confluent CLI installed, you can easily manage compatibility settings from your terminal without writing any code.
 
-   To get the current compatibility setting for a subject:
+To get the current compatibility setting for a subject:
 
-   ```bash
-   confluent schema-registry subject config get my-users-topic-value
-   ```
+```bash
+confluent schema-registry subject config get my-users-topic-value
+```
 
-   To update the compatibility setting to FULL:
+To update the compatibility setting to FULL:
 
-   ```bash
-   confluent schema-registry subject config set my-users-topic-value --compatibility-level FULL
-   ```
+```bash
+confluent schema-registry subject config set my-users-topic-value --compatibility-level FULL
+```
 
-[Introduction to Schema Registry in Kafka](https://medium.com/slalom-blog/introduction-to-schema-registry-in-kafka-915ccf06b902)
+- [Introduction to Schema Registry in Kafka](https://medium.com/slalom-blog/introduction-to-schema-registry-in-kafka-915ccf06b902)
 
-[Schema Registry for Kafka](https://medium.com/@cobch7/schema-registry-for-kafka-002efc74eb7a)
+- [Schema Registry for Kafka](https://medium.com/@cobch7/schema-registry-for-kafka-002efc74eb7a)
 
-[YouTube Video on Schema Registry](https://youtu.be/EIaQsXvbmro)
+- [YouTube Video on Schema Registry](https://youtu.be/EIaQsXvbmro)
